@@ -1,0 +1,145 @@
+clear; clc; close all;
+load('Trainnumbers.mat');
+X = double(Trainnumbers.image);   % 784 x N
+N = size(X, 2);                   % Número de muestras
+
+% ==========================
+% CENTRAR LOS DATOS
+% ==========================
+X_mean = mean(X, 2);
+X_centered = X - X_mean;
+
+% ==========================
+% MATRIZ DE COVARIANZA Y AUTOVALORES/VECTORES
+% ==========================
+C = cov(X_centered');   % 784 x 784
+[EigVec, EigVal] = eig(C);
+[eigValsSorted, idx] = sort(diag(EigVal), 'descend');
+EigVec = EigVec(:, idx);
+
+% ==========================
+% VARIANZA ACUMULADA
+% ==========================
+total_variance = sum(eigValsSorted);
+accum_variance = cumsum(eigValsSorted) / total_variance;
+
+% Mostrar % de varianza con 50, 100, 200, 300 componentes
+fprintf('Varianza acumulada:\n');
+componentes = [50, 100, 200, 300, 400, 784];
+for c = componentes
+    fprintf('k = %d --> Varianza: %.4f%%\n', c, accum_variance(c)*100);
+end
+
+% Buscar k para superar 90% y 95%
+k90 = find(accum_variance >= 0.90, 1);
+k95 = find(accum_variance >= 0.95, 1);
+fprintf('\nPara 90%% de varianza se necesitan: %d componentes\n', k90);
+fprintf('Para 95%% de varianza se necesitan: %d componentes\n', k95);
+
+% Graficar Varianza acumulada
+figure;
+plot(accum_variance, 'LineWidth', 2);
+xlabel('Número de componentes');
+ylabel('Varianza acumulada');
+title('Curva de varianza acumulada');
+grid on;
+
+% ==========================
+% RECONSTRUCCIÓN Y MSE
+% ==========================
+dims = [10, 20, 50, 100, 200, 400];
+MSE = zeros(size(dims));
+for i = 1:length(dims)
+    k = dims(i);
+    W = EigVec(:, 1:k);
+    projected = W' * X_centered;
+    reconstructed = W * projected + X_mean;
+    error = X - reconstructed;
+    MSE(i) = mean(error(:).^2);
+end
+
+% Graficar MSE
+figure;
+plot(dims, MSE, '-o', 'LineWidth', 2);
+xlabel('Componentes principales');
+ylabel('MSE de reconstrucción');
+title('MSE vs Número de componentes');
+grid on;
+
+% ==========================
+% MOSTRAR 4 DÍGITOS DIFERENTES
+% ==========================
+% Escoge el k con el que quieres la reconstrucción final
+k = 154; 
+W = EigVec(:, 1:k);
+projected = W' * X_centered;
+reconstructed = W * projected + X_mean;
+
+% Índices de 4 imágenes a comparar (puedes cambiarlos)
+indices = [1, 100, 500, 1000];  
+
+figure;
+for j = 1:length(indices)
+    idx_img = indices(j);
+    
+    % Mostrar original
+    subplot(4, 2, (j-1)*2 + 1);
+    imshow(reshape(X(:,idx_img), [28 28])', [0 255]);
+    title(['Original #' num2str(idx_img)]);
+    
+    % Mostrar reconstruida
+    subplot(4, 2, (j-1)*2 + 2);
+    img_rec = reshape(reconstructed(:,idx_img), [28 28])';
+    imshow(mat2gray(img_rec));  
+    title(['Reconstruida k=' num2str(k)]);
+end
+% =========================================
+% PROYECCIÓN PCA (Tú ya la tienes hasta aquí)
+% =========================================
+% Al final de tu PCA:
+projected_data = projected;  % Esto viene de tu PCA con k=154
+
+% ================================
+% PREPARACIÓN DE LOS DATOS
+% ================================
+cv = cvpartition(Trainnumbers.label, 'HoldOut', 0.2);
+trainIdx = training(cv);
+testIdx = test(cv);
+
+X_train = projected_data(:, trainIdx)';
+Y_train = Trainnumbers.label(trainIdx);
+X_test = projected_data(:, testIdx)';
+Y_test = Trainnumbers.label(testIdx);
+
+% ================================
+% NORMALIZACIÓN
+% ================================
+X_train = normalize(X_train);
+X_test = normalize(X_test);
+
+% =========================================
+% k-NN CLASSIFIER
+% =========================================
+fprintf('\n=========== CLASIFICADOR k-NN ===========\n');
+k_valor = 3;
+Mdl_knn = fitcknn(X_train, Y_train, 'NumNeighbors', k_valor);
+Y_pred_knn = predict(Mdl_knn, X_test);
+
+% Matriz de confusión y análisis k-NN
+figure;
+cm_knn = confusionchart(Y_test, Y_pred_knn);
+title(['Matriz de Confusión - k-NN (k=' num2str(k_valor) ')']);
+
+Cmat_knn = confusionmat(Y_test, Y_pred_knn);
+aciertos_knn = sum(diag(Cmat_knn));
+errores_knn = sum(Cmat_knn(:)) - aciertos_knn;
+accuracy_knn = (aciertos_knn / sum(Cmat_knn(:))) * 100;
+
+fprintf('Total de aciertos (k-NN): %d\n', aciertos_knn);
+fprintf('Total de errores (k-NN): %d\n', errores_knn);
+fprintf('Accuracy (k-NN): %.2f%%\n', accuracy_knn);
+
+fprintf('\nConfusiones más relevantes en k-NN (cuando el error > 10):\n');
+for i = 1:size(Cmat_knn,1)
+    for j = 1:size(Cmat_knn,2)
+        if i
